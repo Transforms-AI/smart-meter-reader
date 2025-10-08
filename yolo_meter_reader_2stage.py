@@ -369,14 +369,14 @@ class YOLOTwoStageMeterReader:
         # ranges were converted from percentages (0–100) by dividing by 100.
         # They will be adjusted at runtime based on digit detections.
         self.digit_ranges = [
-            (0.01463414634, 0.09268292683),
-            (0.1219512195, 0.2146341463),
-            (0.2390243902, 0.3268292683),
-            (0.356097561, 0.4487804878),
-            (0.4731707317, 0.5707317073),
-            (0.5902439024, 0.6829268293),
-            (0.7073170732, 0.8048780488),
-            (0.8634146341, 0.9512195122),
+            (0.013, 0.125),
+            (0.125, 0.25),
+            (0.25, 0.36),
+            (0.36, 0.48),
+            (0.48, 0.61),
+            (0.61, 0.72),
+            (0.72, 0.84),
+            (0.86, 0.95),
         ]
 
     def slice_digits_by_ratio(self, image: np.ndarray, ranges: List[Tuple[float, float]],
@@ -772,8 +772,9 @@ class YOLOTwoStageMeterReader:
                         used_offset = avg_offset
 
                     # Shift the tile by used_offset
-                    ns = s + used_offset
-                    ne = e + used_offset
+                    print("used_offset:",t_idx,used_offset)
+                    ns = s #+ used_offset
+                    ne = e #+ used_offset
 
                     # Clamp to [0, 1]
                     ns = max(0.0, min(1.0, ns))
@@ -847,6 +848,34 @@ class YOLOTwoStageMeterReader:
             tile_fname = os.path.join(tiles_dir, f"tile_{i:03d}.png")
             # If tile is grayscale or single channel, cv2.imwrite works too
             cv2.imwrite(tile_fname, tile)
+            # Draw tiles and detected digit boxes on the dial crop
+            dial_annotated = sharpened_dial.copy()
+            h, w = dial_annotated.shape[:2]
+            # Draw tile boxes and centers
+            for i, (start_pct, end_pct) in enumerate(adjusted_ranges):
+                left = int(start_pct * w)
+                right = int(end_pct * w)
+                top = 0
+                bottom = h - 1
+                # Rectangle for tile
+                cv2.rectangle(dial_annotated, (left, top), (right, bottom), (0, 255, 0), 2)
+                # Center point for tile
+                cx = int((left + right) / 2)
+                cy = int(h / 2)
+                cv2.circle(dial_annotated, (cx, cy), 4, (0, 255, 0), -1)
+            # Draw detected digit boxes and centers if available
+            if self.digit_detector is not None and 'boxes' in locals():
+                for i in range(len(boxes)):
+                    x1, y1, x2, y2 = boxes[i]
+                    # Rectangle for detected digit
+                    cv2.rectangle(dial_annotated, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 2)
+                    # Center point for detected digit
+                    cx = int((x1 + x2) / 2)
+                    cy = int((y1 + y2) / 2)
+                    cv2.circle(dial_annotated, (cx, cy), 4, (255, 0, 0), -1)
+            # Save the annotated dial image
+            annotated_fname = os.path.join(save_root, "dial_annotated.png")
+            cv2.imwrite(annotated_fname, dial_annotated)
         # Classify each tile to obtain digit predictions and confidences
         classification_digits: List[str] = [''] * len(tiles)
         classification_confs: List[float] = [0.0] * len(tiles)
@@ -905,7 +934,7 @@ def publish_mqtt(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Two‑stage YOLO gas meter reader")
-    parser.add_argument("--meter-detector", type=str, required=True, help="Path to the meter detector .pt file")
+    parser.add_argument("--meter-detector", type=str, required=True, default=None, help="Path to the meter detector .pt file")
     parser.add_argument("--dial-detector", type=str, required=True, help="Path to the digit dial detector .pt file")
     parser.add_argument(
         "--classifier", type=str, required=False, default=None,
