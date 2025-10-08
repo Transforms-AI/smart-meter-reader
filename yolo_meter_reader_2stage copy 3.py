@@ -65,53 +65,51 @@ except ImportError:
 # not depend on any external modules.
 
 def balancing_tilted_image(image: np.ndarray, greyscale_image: np.ndarray, cycles: int) -> np.ndarray:
-    """Balance a potentially tilted image using the Hough line transform (disabled for original quality).
+    """Balance a potentially tilted image using the Hough line transform.
 
-    MODIFIED: Balancing operations have been commented out to preserve original
-    image quality and avoid unnecessary transformations that might degrade the image.
+    The gas‑meter dial may not be perfectly horizontal in the captured frame.
+    This function attempts to find the dominant line angle and rotates the
+    image so the dial is level.  It runs for a fixed number of cycles to
+    refine the alignment.
 
     Args:
         image: Colour BGR image as a NumPy array.
-        greyscale_image: Greyscale version of the same image (unused).
-        cycles: Number of balancing iterations (unused).
+        greyscale_image: Greyscale version of the same image.
+        cycles: Number of balancing iterations.
 
     Returns:
-        The original BGR image without any balancing transformations.
+        The rotated BGR image.
     """
-    # Return original image without any balancing to preserve quality
+    for _ in range(cycles):
+        dst = cv2.Canny(greyscale_image, 50, 200, None, 3)
+        cdst = cv2.cvtColor(dst, cv2.COLOR_GRAY2BGR)
+        lines = cv2.HoughLines(dst, 1, np.pi / 180, 110, None, 0, 0)
+        sizemax = float(np.hypot(cdst.shape[0], cdst.shape[1]))
+        if lines is not None:
+            average_angle = 0.0
+            line_num = 0
+            for i in range(len(lines)):
+                rho = lines[i][0][0]
+                theta = lines[i][0][1]
+                cur_angle = theta * 180.0 / np.pi
+                if abs(90.0 - cur_angle) < 15:
+                    average_angle += cur_angle
+                    line_num += 1
+                # draw lines for debugging (not needed here)
+                a = np.cos(theta)
+                b = np.sin(theta)
+                x0 = a * rho
+                y0 = b * rho
+                pt1 = (int(x0 + sizemax * (-b)), int(y0 + sizemax * a))
+                pt2 = (int(x0 - sizemax * (-b)), int(y0 - sizemax * a))
+                cv2.line(cdst, pt1, pt2, (0, 0, 255), 1, cv2.LINE_AA)
+            if line_num > 0:
+                rows, cols = greyscale_image.shape[:2]
+                angle = (average_angle / line_num) - 90.0
+                M = cv2.getRotationMatrix2D((cols / 2.0, rows / 2.0), angle, 1.0)
+                greyscale_image = cv2.warpAffine(greyscale_image, M, (cols, rows))
+                image = cv2.warpAffine(image, M, (cols, rows))
     return image
-    
-    # COMMENTED OUT: Balancing operations disabled to preserve original quality
-    # for _ in range(cycles):
-    #     dst = cv2.Canny(greyscale_image, 50, 200, None, 3)
-    #     cdst = cv2.cvtColor(dst, cv2.COLOR_GRAY2BGR)
-    #     lines = cv2.HoughLines(dst, 1, np.pi / 180, 110, None, 0, 0)
-    #     sizemax = float(np.hypot(cdst.shape[0], cdst.shape[1]))
-    #     if lines is not None:
-    #         average_angle = 0.0
-    #         line_num = 0
-    #         for i in range(len(lines)):
-    #             rho = lines[i][0][0]
-    #             theta = lines[i][0][1]
-    #             cur_angle = theta * 180.0 / np.pi
-    #             if abs(90.0 - cur_angle) < 15:
-    #                 average_angle += cur_angle
-    #                 line_num += 1
-    #             # draw lines for debugging (not needed here)
-    #             a = np.cos(theta)
-    #             b = np.sin(theta)
-    #             x0 = a * rho
-    #             y0 = b * rho
-    #             pt1 = (int(x0 + sizemax * (-b)), int(y0 + sizemax * a))
-    #             pt2 = (int(x0 - sizemax * (-b)), int(y0 - sizemax * a))
-    #             cv2.line(cdst, pt1, pt2, (0, 0, 255), 1, cv2.LINE_AA)
-    #         if line_num > 0:
-    #             rows, cols = greyscale_image.shape[:2]
-    #             angle = (average_angle / line_num) - 90.0
-    #             M = cv2.getRotationMatrix2D((cols / 2.0, rows / 2.0), angle, 1.0)
-    #             greyscale_image = cv2.warpAffine(greyscale_image, M, (cols, rows))
-    #             image = cv2.warpAffine(image, M, (cols, rows))
-    # return image
 
 
 def resize_and_sharpen_image(
@@ -350,14 +348,13 @@ class YOLOTwoStageMeterReader:
         self.classifier = YOLO(classifier_path) if classifier_path else None
         # Optional digit detection model
         self.digit_detector = YOLO(digit_detector_path) if digit_detector_path else None
-        # Preprocessing parameters (modified to preserve original quality)
-        # Keep original dial dimensions when possible, only resize minimally if needed
-        self.resize_dim = (1200, 140)  # Keep for consistency with existing models
-        self.balancing_cycles = 0  # Disabled balancing to preserve original quality
-        self.tb_w = 70  # Unused (sharpening disabled)
-        self.tb_th = 0  # Unused (sharpening disabled)
-        self.tb_blur_size = 10  # Unused (sharpening disabled)
-        self.tb_blur_sigma = 50  # Unused (sharpening disabled)
+        # Preprocessing parameters (inherited from previous implementation)
+        self.resize_dim = (1200, 140)
+        self.balancing_cycles = 3
+        self.tb_w = 70
+        self.tb_th = 0
+        self.tb_blur_size = 10
+        self.tb_blur_sigma = 50
         self.block_size = 65
         self.k = 0.5
         self.h_min = 60
@@ -654,30 +651,28 @@ class YOLOTwoStageMeterReader:
     ) -> Tuple[str, np.ndarray, List[np.ndarray], np.ndarray, np.ndarray]:
         """Run the full pipeline and return the predicted meter reading.
 
-        MODIFIED: This method has been updated to preserve original image quality
-        by disabling blur and sharpening operations.
-
         This method performs the following steps:
         1. Detect and crop the meter region from the full image.
-        2. Skip balancing operations to preserve original quality.
-        3. Detect the dial within the meter and obtain its oriented
+        2. Optionally balance the meter crop using the Hough transform to
+           compensate for tilt.
+        3. Detect the dial within the balanced meter and obtain its oriented
            bounding box (OBB) and orientation angle.
-        4. Rotate the meter only when necessary for digit detection alignment.
+        4. Rotate the balanced meter so that the dial is horizontally aligned.
         5. Detect digits within the rotated meter using the YOLO digit detector
            (if provided) and assign them to positions based on their x‑axis
            relative to the dial OBB.  Optionally fall back to classification
            for missing digits.
-        6. Return the digit string and intermediate images with original quality.
+        6. Return the digit string and intermediate images.
 
         Args:
             image: BGR image containing the full gas meter.
 
         Returns:
-            A tuple (pred_str, original_dial_resized, tiles, meter_crop, dial_crop) where
+            A tuple (pred_str, sharpened_dial, tiles, meter_crop, dial_crop) where
             - pred_str is the final meter reading string.
-            - original_dial_resized is the resized dial crop with original quality
-              (no sharpening applied).
-            - tiles is a list of digit tiles with original quality.
+            - sharpened_dial is the resized and sharpened dial crop used for
+              classification fallback.
+            - tiles is a list of digit tiles for classification fallback.
             - meter_crop is the axis‑aligned crop of the meter region.
             - dial_crop is the crop of the dial region extracted via the OBB.
         """
@@ -688,8 +683,7 @@ class YOLOTwoStageMeterReader:
         balanced_meter = balancing_tilted_image(meter_crop.copy(), meter_grey.copy(), self.balancing_cycles)
         # Stage 3: detect the dial OBB and obtain angle and polygon
         dial_crop, angle, poly = self.detect_dial(balanced_meter)
-        # Resize the dial for classification fallback and visualisation (no sharpening)
-        # Keep original quality - only resize if needed for consistency with existing code
+        # Resize and sharpen the dial for classification fallback and visualisation
         sharpened_dial = resize_and_sharpen_image(
             dial_crop,
             self.resize_dim,
@@ -844,9 +838,7 @@ class YOLOTwoStageMeterReader:
         #print("here3")
         
         print("adjusted_ranges: ",adjusted_ranges)
-        # Use original dial crop for better quality, resize it to match sharpened_dial dimensions for consistency
-        original_dial_resized = cv2.resize(dial_crop, self.resize_dim, interpolation=cv2.INTER_LANCZOS4)
-        tiles = self.slice_digits_by_ratio(original_dial_resized, adjusted_ranges, img_width=28, img_height=28)
+        tiles = self.slice_digits_by_ratio(sharpened_dial, adjusted_ranges, img_width=28, img_height=28)
         #print("here45")
         
         # print("tiles: ",tiles)
@@ -860,8 +852,8 @@ class YOLOTwoStageMeterReader:
             tile_fname = os.path.join(tiles_dir, f"tile_{i:03d}.png")
             # If tile is grayscale or single channel, cv2.imwrite works too
             cv2.imwrite(tile_fname, tile)
-            # Draw tiles and detected digit boxes on the dial crop (use original resized version)
-            dial_annotated = original_dial_resized.copy()
+            # Draw tiles and detected digit boxes on the dial crop
+            dial_annotated = sharpened_dial.copy()
             h, w = dial_annotated.shape[:2]
             # Draw tile boxes and centers
             for i, (start_pct, end_pct) in enumerate(adjusted_ranges):
@@ -909,8 +901,7 @@ class YOLOTwoStageMeterReader:
                 final_positions.append(cls_digit)
         pred_str = ''.join(final_positions)
         #print("here3")
-        # Return original dial resized instead of sharpened version for better quality
-        return pred_str, original_dial_resized, tiles, meter_crop, dial_crop
+        return pred_str, sharpened_dial, tiles, meter_crop, dial_crop
 
     def capture_image(self, camera_id: int = 0, width: int = 1920, height: int = 1080) -> np.ndarray:
         cap = cv2.VideoCapture(camera_id)
