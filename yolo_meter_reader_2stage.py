@@ -838,7 +838,7 @@ class YOLOTwoStageMeterReader:
         
         # print("tiles: ",tiles)
         # Save each tile into a subfolder `tiles`
-        save_root =  "/home/islam/repon/smart-gas-meter-reader/results"
+        save_root =  "results"
         tiles_dir = os.path.join(save_root, "tiles")
         os.makedirs(tiles_dir, exist_ok=True)
         # bbox_info might carry bounding box or positional data for each tile
